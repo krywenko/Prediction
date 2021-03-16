@@ -2,7 +2,7 @@
 solar=1  #enable or disable processing solar 0/1
 wind=1   #enable or disable processing wind 0/1
 PROCESS=1   # enable/disable processing  json 0/1
-DIR="$HOME/Prediction-upload"  # run directory
+DIR="$HOME/Prediction"  # run directory
 
 LAT=51.4298255        #your latitude
 LON=-97.4662374       #your longitude 
