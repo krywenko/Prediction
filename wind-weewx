@@ -1,0 +1,106 @@
+#!/bin/bash
+
+Dia=3   # diameter of the windmill- meters
+EFF=.40    # effieciency of the wind generator
+INV=.90  # inverter efficency
+
+
+MQTT=192.168.168.251
+
+######################### Constants ############################
+
+	
+		Rd=287.05 ## Specific gas constant for dry air J/(KgK)
+		Rv=461.495 ## Specific gas constant for water vapour J/(KgK)
+
+        Eso=6.1078 ##
+		c0=0.99999683
+		c1=-0.90826951e-2
+		c2=0.78736169e-4
+		c3=-0.61117958e-6
+		c4=0.43884187e-8
+		c5=-0.29883885e-10
+		c6=0.21874425e-12
+		c7=-0.17892321e-14
+		c8=0.11112018e-16
+		c9=-0.30994571e-19
+	
+################## API #############################
+
+
+
+#JSON=$(lynx -dump "https://api.weatherbit.io/v2.0/forecast/hourly?&lat=$LAT&lon=-$LON&key=$API&hours=24"  )
+#echo $JSON | jq > JSON
+JSON=$( cat /dev/shm/weewx)
+echo $JSON | jq ' "\(.dateTime),\(.outTemp_C),\(.windSpeed_kph),\(.barometer_mbar),\(.outHumidity),\(.dewpoint_C)" ' |tr -d '"' > /dev/shm/windWXT
+ while IFS=, read -r Time Temp Wind  Pres RH DEW
+do
+while IFS=, read -r TimeP TempP WindP  PresP RHP DEWP
+do
+if [ $Time == null ]; then Time=$TimeP ; fi
+if [ $Temp == null ]; then Temp=$TempP ; fi
+if [ $Wind == null ]; then Wind=$WindP ; fi
+if [ $Pres == null ]; then Pres=$PresP ; fi
+if [ $RH == null ]; then RH=$RHP ; fi
+if [ $DEW == null ]; then DEW=$DEWP ; fi
+
+
+# echo $Time,$Temp,$Wind,$Pres,$RH,$DEW
+ #echo $Time,$Temp,$Wind,$Pres,$RH,$DEW > /dev/shm/wePrev
+ 
+done < /dev/shm/wePrev
+echo $Time,$Temp,$Wind,$Pres,$RH,$DEW > /dev/shm/wePrev
+
+done < /dev/shm/windWXT
+#############################################################
+
+while IFS=, read -r Time Temp Wind  Pres RH DEW
+do
+
+######## Air Density ##################
+ #Temp=$( echo "$Temp - 273.15" | bc -l )
+ #DEW=$( echo "$DEW - 273.15" | bc -l )
+ p=$(echo  "$Pres * 100" | bc -l)
+ 
+p1=$(awk -v t=$Temp  -v c9=$c9 -v c8=$c8 -v c7=$c7 -v c6=$c6 -v c5=$c5  -v c4=$c4 -v c3=$c3 -v c2=$c2 -v c1=$c1 -v c0=$c0 'BEGIN{ print ((c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*(c6+t*(c7+t*(c8+t*(c9)))))))))))}') #> null
+p2=$(awk -v t=$DEW  -v c9=$c9 -v c8=$c8 -v c7=$c7 -v c6=$c6 -v c5=$c5  -v c4=$c4 -v c3=$c3 -v c2=$c2 -v c1=$c1 -v c0=$c0 'BEGIN{ print ((c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*(c6+t*(c7+t*(c8+t*(c9)))))))))))}') #> null
+saturationPressureD=$(awk  -v eso=$Eso -v p=$p2  'BEGIN{print eso/ p^(8) }')
+saturationPressure=$(awk  -v eso=$Eso -v p=$p1  'BEGIN{print eso/ p^(8) }') 
+waterVapourPressure=$(awk  -v sat=$saturationPressure -v h=$RH 'BEGIN{print sat *( h/100) }')
+dryAirPressure=$(awk -v p=$p -v wvp=$waterVapourPressure 'BEGIN{print p - wvp }')
+temperatureK=$(awk -v t=$Temp 'BEGIN{print t + 273.15 }')
+Density=$(awk -v rd=$Rd -v dap=$dryAirPressure -v t=$temperatureK -v wvp=$waterVapourPressure -v rv=$Rv 'BEGIN{print ((dap/(rd*t)) + (wvp/(rv*t))) }')
+
+pd=$(awk -v ap=$Pres -v pv=$saturationPressureD 'BEGIN{print ap - pv }')
+
+#rho = ((pv * 100) / (constants.rv * tk)) + ((pd * 100) / (constants.rd * tk));
+
+rho=$(awk -v rd=$Rd -v pd=$pd -v tk=$temperatureK -v pv=$saturationPressureD -v rv=$Rv 'BEGIN{print ((pv * 100) / (rv * tk)) + ((pd * 100) / (rd * tk)) }')
+
+
+#echo   $Density $rho
+
+###############################################
+############ wind power #####################
+
+#ξ ρ π d2 v3 / 8 
+
+pi=3.14159265358979323846264338327950288
+#v=$Wind
+v=$(echo "$Wind * 0.27777777777778 " | bc -l )  # convert to m/s
+
+POWER=$(echo "scale=0;($EFF * (($Density * ($pi *($Dia^2)) * ($v^3)) /8)) " |bc -l)
+power=$(echo "scale=0;( $POWER * $INV)" | bc -l )
+
+ echo $POWER,$power
+##### mqtt send to database ##################
+
+mosquitto_pub -h $MQTT -t 'incoming/test/mqtt-Energy/power-predict_wind_WEEWX' -m "N:$power"
+mosquitto_pub -h $MQTT -t 'incoming/test/mqtt-Energy/power-predict_wind_WEEWX_Den' -m "N:$Density"
+mosquitto_pub -h $MQTT -t 'incoming/test/mqtt-Energy/power-predict_wind_WEEWX_W' -m "N:$Wind"
+mosquitto_pub -h $MQTT -t 'incoming/test/mqtt-Energy/power-predict_wind_WEEWX_T' -m "N:$Temp"
+mosquitto_pub -h $MQTT -t 'incoming/test/mqtt-Energy/power-predict_wind_WEEWX_P' -m "N:$Pres"
+mosquitto_pub -h $MQTT -t 'incoming/test/mqtt-Energy/power-predict_wind_WEEWX_RH' -m "N:$RH"
+mosquitto_pub -h $MQTT -t 'incoming/test/mqtt-Energy/power-predict_wind_WEEWX_D' -m "N:$DEW"
+ 
+done < /dev/shm/wePrev

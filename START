@@ -1,0 +1,209 @@
+#!/bin/bash
+solar=1  #enable or disable processing solar 0/1
+wind=1   #enable or disable processing wind 0/1
+PROCESS=1   # enable/disable processing  json 0/1
+DIR="$HOME/Prediction-upload"  # run directory
+
+LAT=51.4298255        #your latitude
+LON=-97.4662374       #your longitude 
+
+
+##### solar configuration ####
+
+P_offset=1  # either 0 no offset or 1 30 minute offset
+Wm2=1000  # maxium solar potential
+ACO=0.80     # average cloud opacitity 0.6 - 0.9 
+
+ 
+##### Wind Configurations #####
+
+Dia=3   # diameter of the windmill- meters
+EFF=.40    # effieciency of the wind generator
+INV=.90    # invert efficiency
+
+############# AERIS ################   https://www.aerisweather.com/
+
+secret= 
+id=
+############ CLIMACELL ############   https://www.climacell.co
+
+API1=
+
+########## OPENWEATHER ############   https://openweathermap.org/api
+
+API2= 
+
+######### WEATHER API #############  https://www.weatherapi.com/
+
+API3=
+
+######### WEATHERBIT ##############  https://www.weatherbit.io
+
+API4=
+
+#############  VISUALCROSSING ###############  https://www.visualcrossing.com/weather-api
+
+API5= 
+
+
+
+
+############# test connectivity ##############
+date
+  
+connected=0
+
+WGET="/usr/bin/wget"
+until [ $connected -eq 1 ]
+do
+$WGET -q --tries=20 --timeout=10 http://www.google.com -O /tmp/google.idx &> /dev/null
+
+if [ ! -s /tmp/google.idx ]
+then
+    echo "Not Connected..!   Waiting to retry in 5 seconds "
+    sleep 5
+else
+    echo "Connected..!"
+    echo "Downloading weather JSON"
+    connected=1
+fi
+done
+
+#############################################
+############################################
+
+############  test if key is available ########
+                                              #   
+                                              #
+[ -z "$secret" ] && aeris=0 || aeris=1        #
+[ -z "$API1" ] && clima=0 || clima=1          #
+[ -z "$API2" ] && open=0 || open=1            #
+[ -z "$API3" ] && wapi=0 || wapi=1            #
+[ -z "$API4" ] && wbit=0 || wbit=1            #
+[ -z "$API5" ] && viscros=0 || viscros=1      #
+                                              #
+###############################################
+
+################## GET JSON ###################
+
+############# AERIS ################
+if [ $aeris -eq 1 ]
+then
+
+JSON=$(lynx -dump "https://api.aerisapi.com/forecasts/$LAT,$LON?&format=json&filter=1hr&limit=36&client_id=$id&client_secret=$secret"  )
+echo $JSON | jq > /dev/shm/JSON-A
+echo downloaded aeris
+else
+echo no aeris apikey
+fi
+
+############ CLIMACELL ############
+if [ $clima -eq 1 ]
+then
+
+JSON=$(lynx -dump "https://api.climacell.co/v3/weather/forecast/hourly?lat=$LAT&lon=$LON&unit_system=si&start_time=now&fields=surface_shortwave_radiation&fields=visibility&fields=cloud_cover&fields=cloud_base&fields=cloud_ceiling&fields=temp&fields=dewpoint&fields=humidity&fields=wind_speed&fields=baro_pressure&apikey=$API1" )
+
+echo $JSON | jq > /dev/shm/JSON-CC
+
+ echo downloaded climacell
+else
+echo no ClimaCell apikey
+fi
+
+########## OPENWEATHER ############
+if [ $open -eq 1 ]
+then
+
+JSON=$(lynx -dump "https://api.openweathermap.org/data/2.5/onecall?lat=$LAT&lon=$LON&exclude=minutely,current,daily,alerts&appid=$API2" )
+echo $JSON | jq > /dev/shm/JSON-OW
+echo downloaded openweather
+else
+echo no OpenWeather  apikey
+fi
+
+######### WEATHER API #############
+if [ $wapi -eq 1 ]
+then
+
+JSON=$(lynx -dump "http://api.weatherapi.com/v1/forecast.json?key=$API3&q=$LAT,$LON&days=2"  )
+echo $JSON | jq > /dev/shm/JSON-WA
+echo downloaded weather api
+else
+echo no weather-api apikey
+fi
+
+######### WEATHERBIT ##############
+if [ $wbit -eq 1 ]
+then
+
+
+JSON=$(lynx -dump "https://api.weatherbit.io/v2.0/forecast/hourly?&lat=$LAT&lon=-$LON&key=$API4&hours=36"  )
+echo $JSON | jq > /dev/shm/JSON-WB
+echo downloaded weatherbit
+else
+echo no weatherbit apikey
+fi
+#############  VISUALCROSSING ###############
+
+if [ $viscros -eq 1 ]
+then
+
+JSON=$(lynx -dump "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/weatherdata/forecast?aggregateHours=1&combinationMethod=aggregate&contentType=json&unitGroup=metric&locationMode=array&key=$API5&dataElements=default&locations=$LAT,$LON"  )
+#JSON=$(lynx -dump "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/weatherdata/forecast?aggregateHours=1&combinationMethod=aggregate&contentType=json&unitGroup=metric&locationMode=array&key=$API5&dataElements=default&locations=dallas%2C%20mb%2C%20canada"  )
+echo $JSON | jq > /dev/shm/JSON-VC
+echo downloaded visualcrossing
+else
+echo no visualcrossing apikey
+fi
+
+################ RUN  PROCESSES ##################
+if [ $PROCESS -eq 1 ] ; then
+
+echo  -- start processing  --
+cd $DIR
+ echo   $DIR
+ echo "JSON are found in /dev/shm"
+ 
+if [ $aeris -eq 1 ]
+then
+echo AERIS
+if [ $solar -eq 1 ] ; then  echo "----  aeris solar ----"   ; ./solar-aeris $P_offset $Wm2 $ACO ; fi
+if [ $wind -eq 1 ] ; then echo "----  aeris wind ----"   ; ./wind-aeris $Dia $EFF $INV  ; fi
+fi
+
+if [ $clima -eq 1 ]
+then
+echo CLIMACELL
+if [ $solar -eq 1 ] ; then echo "----  climacell solar ----"   ; ./solar-clima $P_offset $Wm2 $ACO ; fi
+if [ $wind -eq 1 ] ; then echo "----  climacell wind ----"   ; ./wind-clima $Dia $EFF $INV ; fi
+fi
+
+if [ $open -eq 1 ]
+then
+echo OPENWEATHER
+if [ $solar -eq 1 ] ; then echo "----  openweather solar ----"   ; ./solar-open $P_offset $Wm2 $ACO ; fi
+if [ $wind -eq 1 ] ; then echo "----  openweather  wind ----"   ; ./wind-open $Dia $EFF $INV ; fi
+fi
+
+if [ $wapi -eq 1 ]
+then
+echo WEATHERAPI
+if [ $solar -eq 1 ] ; then echo "----  weather-api solar ----"   ; ./solar-wapi $P_offset $Wm2 $ACO ; fi
+if [ $wind -eq 1 ]; then echo "----  weather-api wind ----"   ; ./wind-wapi $Dia $EFF $INV ; fi
+fi
+
+if [ $wbit -eq 1 ]
+then
+echo WEATHERBIT
+if [ $solar -eq 1 ] ; then echo "----  weatherbit solar ----"   ; ./solar-wbit  $P_offset $Wm2 $ACO ; fi
+if [ $wind -eq 1 ] ; then echo "----  weatherbit wind ----"   ; ./wind-wbit $Dia $EFF $INV ; fi
+fi
+
+if [ $viscros -eq 1 ]
+then
+echo VISUALCROSSING
+if [ $solar -eq 1 ] ; then echo "----  visualcrossing solar ----"   ; ./solar-viscros $P_offset $Wm2 $ACO ; fi
+fi
+
+
+fi
