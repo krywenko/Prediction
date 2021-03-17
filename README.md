@@ -8,3 +8,10 @@ and edit START    - adding in your API keys  and some other  info  and it writes
 
 supports
 aeris,climacell,openweather,weatheraapi weatherbit and visualcrossing  weather APIs
+
+
+you will need to install pysolar , lynx and bc
+
+pip install pysolar
+
+lynx and bc are found in your linux software repository 
